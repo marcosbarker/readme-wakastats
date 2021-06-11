@@ -17,6 +17,7 @@ import humanize
 from urllib.parse import quote
 import json
 import sys
+from datetime import date
 
 from dotenv import load_dotenv
 
@@ -42,6 +43,7 @@ show_profile_view = os.getenv('INPUT_SHOW_PROFILE_VIEWS')
 show_short_info = os.getenv('INPUT_SHOW_SHORT_INFO')
 locale = os.getenv('INPUT_LOCALE')
 commit_by_me = os.getenv('INPUT_COMMIT_BY_ME')
+ignored_repos_name = str(os.getenv('INPUT_IGNORED_REPOS') or '').replace(' ', '').split(',')
 show_waka_stats = 'y'
 # The GraphQL query to get commit data.
 userInfoQuery = """
@@ -70,7 +72,7 @@ createContributedRepoQuery = Template("""query {
 createCommittedDateQuery = Template("""
 query {
     repository(owner: "$owner", name: "$name") {
-      ref(qualifiedName: "master") {
+      defaultBranchRef {
         target {
           ... on Commit {
             history(first: 100, author: { id: "$id" }) {
@@ -212,7 +214,7 @@ def generate_commit_list(tz):
         result = run_query(
             createCommittedDateQuery.substitute(owner=repository["owner"]["login"], name=repository["name"], id=id))
         try:
-            committed_dates = result["data"]["repository"]["ref"]["target"]["history"]["edges"]
+            committed_dates = result["data"]["repository"]["defaultBranchRef"]["target"]["history"]["edges"]
             for committedDate in committed_dates:
                 date = datetime.datetime.strptime(committedDate["node"]["committedDate"],
                                                   "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc).astimezone(
@@ -387,9 +389,11 @@ def generate_language_per_repo(result):
 
 def get_line_of_code():
     repositoryList = run_query(repositoryListQuery.substitute(username=username, id=id))
-    loc = LinesOfCode(id, username, ghtoken, repositoryList)
+    loc = LinesOfCode(id, username, ghtoken, repositoryList, ignored_repos_name)
     yearly_data = loc.calculateLoc()
-    total_loc = sum([yearly_data[year][quarter][lang] for year in yearly_data for quarter in yearly_data[year] for lang in yearly_data[year][quarter]])
+    total_loc = sum(
+        [yearly_data[year][quarter][lang] for year in yearly_data for quarter in yearly_data[year] for lang in
+         yearly_data[year][quarter]])
     return humanize.intword(int(total_loc))
 
 
@@ -420,9 +424,11 @@ def get_short_info(github):
         string += "> 🚫 " + translate["Not Opted to Hire"] + "\n > \n"
 
     string += '> 📜 '
-    string += translate['public repositories'] % public_repo + " " + '\n > \n' if public_repo != 1 else translate['public repository'] % public_repo + " " + '\n > \n'
+    string += translate['public repositories'] % public_repo + " " + '\n > \n' if public_repo != 1 else translate[
+                                                                                                            'public repository'] % public_repo + " " + '\n > \n'
     string += '> 🔑 '
-    string += translate['private repositories'] % private_repo + " " +' \n > \n' if private_repo != 1 else translate['private repository'] % private_repo + " " + '\n > \n'
+    string += translate['private repositories'] % private_repo + " " + ' \n > \n' if private_repo != 1 else translate[
+                                                                                                                'private repository'] % private_repo + " " + '\n > \n'
 
     return string
 
@@ -453,18 +459,21 @@ def get_stats(github):
         stats = stats + generate_language_per_repo(repositoryList) + '\n\n'
 
     if showLocChart.lower() in truthy:
-        loc = LinesOfCode(id, username, ghtoken, repositoryList)
+        loc = LinesOfCode(id, username, ghtoken, repositoryList, ignored_repos_name)
         yearly_data = loc.calculateLoc()
         loc.plotLoc(yearly_data)
         stats += '**' + translate['Timeline'] + '**\n\n'
         branch_name = github.get_repo(f'{username}/{username}').default_branch
         stats = stats + '![Chart not found](https://raw.githubusercontent.com/' + username + '/' + username + '/' + branch_name + '/charts/bar_graph.png) \n\n'
-
+    today = date.today()
+    d1 = today.strftime("%d/%m/%Y")
+    stats = stats + "\n Last Updated on " + d1
+    
     return stats
 
 
 # def star_me():
-    # requests.put("https://api.github.com/user/starred/anmol098/waka-readme-stats", headers=headers)
+# requests.put("https://api.github.com/user/starred/anmol098/waka-readme-stats", headers=headers)
 
 
 def decode_readme(data: str):
